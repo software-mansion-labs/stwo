@@ -11,12 +11,12 @@ use super::m31::LOG_N_LANES;
 use super::SimdBackend;
 use crate::core::fields::m31::{BaseField, N_BYTES_FELT};
 use crate::core::vcs::blake2_hash::Blake2sHash;
-use crate::core::vcs_lifted::blake2_merkle::Blake2sMerkleHasher;
+use crate::core::vcs_lifted::blake2_merkle::{Blake2sMerkleHasher, Blake2sMerkleHasherGeneric};
 use crate::core::vcs_lifted::merkle_hasher::MerkleHasherLifted;
 use crate::parallel_iter;
 use crate::prover::backend::simd::blake2s::{
-    compress_finalize, compress_unfinalized, transpose_msgs, untranspose_states,
-    SIMD_LEAF_INITIAL_STATE, SIMD_NODE_INITIAL_STATE, ZEROS,
+    compress_finalize, compress_unfinalized, reduce_to_m31_simd, transpose_msgs,
+    untranspose_states, SIMD_LEAF_INITIAL_STATE, SIMD_NODE_INITIAL_STATE, ZEROS,
 };
 use crate::prover::backend::{Col, Column};
 use crate::prover::vcs_lifted::ops::MerkleOpsLifted;
@@ -26,7 +26,9 @@ const N_FELTS_IN_BLAKE_STATE: usize = 8;
 const N_BYTES_IN_BLAKE_MESSAGE: u64 = N_FELTS_IN_BLAKE_MESSAGE as u64 * N_BYTES_FELT as u64;
 const N_BYTES_IN_PREFIX: u64 = 64;
 
-impl MerkleOpsLifted<Blake2sMerkleHasher> for SimdBackend {
+impl<const IS_M31_OUTPUT: bool> MerkleOpsLifted<Blake2sMerkleHasherGeneric<IS_M31_OUTPUT>>
+    for SimdBackend
+{
     /// See the docs of [`crate::prover::backend::cpu::blake2s_lifted`].
     ///
     /// Note that, in this function, all variables that track log sizes
@@ -117,7 +119,11 @@ impl MerkleOpsLifted<Blake2sMerkleHasher> for SimdBackend {
         next_layer_states
             .iter()
             .flat_map(|x| {
-                let state: [Blake2sHash; 16] = unsafe { transmute(untranspose_states(*x)) };
+                let mut untransposed = untranspose_states(*x);
+                if IS_M31_OUTPUT {
+                    untransposed = std::array::from_fn(|i| reduce_to_m31_simd(untransposed[i]));
+                }
+                let state: [Blake2sHash; 16] = unsafe { transmute(untransposed) };
                 state
             })
             .collect_vec()
@@ -154,7 +160,12 @@ impl MerkleOpsLifted<Blake2sMerkleHasher> for SimdBackend {
                 transpose_msgs(msgs),
                 N_BYTES_IN_PREFIX + N_BYTES_IN_BLAKE_MESSAGE,
             );
-            let state: [Blake2sHash; 16] = unsafe { transmute(untranspose_states(state)) };
+
+            let mut untransposed = untranspose_states(state);
+            if IS_M31_OUTPUT {
+                untransposed = std::array::from_fn(|i| reduce_to_m31_simd(untransposed[i]));
+            }
+            let state: [Blake2sHash; 16] = unsafe { transmute(untransposed) };
             chunk.copy_from_slice(&state);
         });
         res
@@ -249,7 +260,7 @@ mod tests {
 
     use crate::core::fields::m31::{BaseField, M31};
     use crate::core::vcs::blake2_hash::{Blake2sHash, Blake2sHasher};
-    use crate::core::vcs_lifted::blake2_merkle::Blake2sMerkleHasher;
+    use crate::core::vcs_lifted::blake2_merkle::{Blake2sM31MerkleHasher, Blake2sMerkleHasher};
     use crate::prover::backend::simd::column::BaseColumn;
     use crate::prover::backend::simd::SimdBackend;
     use crate::prover::backend::CpuBackend;
@@ -265,6 +276,18 @@ mod tests {
         assert_eq!(
             <CpuBackend as MerkleOpsLifted<Blake2sMerkleHasher>>::build_next_layer(&layer),
             <SimdBackend as MerkleOpsLifted<Blake2sMerkleHasher>>::build_next_layer(&layer)
+        );
+    }
+
+    #[test]
+    fn test_build_next_layer_m31() {
+        const LOG_SIZE: u32 = 6;
+        let layer: Vec<Blake2sHash> = (0u32..1 << (LOG_SIZE + 1))
+            .map(|i| Blake2sHasher::hash(&i.to_le_bytes()))
+            .collect();
+        assert_eq!(
+            <CpuBackend as MerkleOpsLifted<Blake2sM31MerkleHasher>>::build_next_layer(&layer),
+            <SimdBackend as MerkleOpsLifted<Blake2sM31MerkleHasher>>::build_next_layer(&layer)
         );
     }
 
