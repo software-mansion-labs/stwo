@@ -264,8 +264,8 @@ impl PolyOps for CpuBackend {
 
         let mut itwiddles = vec![BaseField::zero(); twiddles.len()];
         twiddles
-            .array_chunks::<CHUNK_SIZE>()
-            .zip(itwiddles.array_chunks_mut::<CHUNK_SIZE>())
+            .chunks_exact(CHUNK_SIZE)
+            .zip(itwiddles.chunks_exact_mut(CHUNK_SIZE))
             .for_each(|(src, dst)| {
                 batch_inverse_in_place(src, dst);
             });

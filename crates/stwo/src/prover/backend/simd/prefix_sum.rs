@@ -33,7 +33,11 @@ pub fn inclusive_prefix_sum(
     // Handle the first two up sweep rounds manually.
     // Required due different ordering of `CircleDomain` and `Coset`.
     // Evaluations are provided in bit-reversed `CircleDomain` order.
-    for ([l0, l1], [r0, r1]) in izip!(l_half.array_chunks_mut(), r_half.array_chunks_mut().rev()) {
+    for (l_chunk, r_chunk) in izip!(l_half.chunks_exact_mut(2), r_half.rchunks_exact_mut(2)) {
+        let (l_lo, l_hi) = l_chunk.split_at_mut(1);
+        let (l0, l1) = (&mut l_lo[0], &mut l_hi[0]);
+        let (r_lo, r_hi) = r_chunk.split_at_mut(1);
+        let (r0, r1) = (&mut r_lo[0], &mut r_hi[0]);
         let (mut half_coset0_lo, half_coset1_hi_rev) = l0.deinterleave(*l1);
         let half_coset1_hi = half_coset1_hi_rev.reverse();
         let (mut half_coset0_hi, half_coset1_lo_rev) = r0.deinterleave(*r1);
@@ -56,8 +60,8 @@ pub fn inclusive_prefix_sum(
     let mut chunk_size = half_coset0_sums.len() / 2;
     while chunk_size > 1 {
         let (lows, highs) = half_coset0_sums.split_at_mut(chunk_size);
-        zip(lows.array_chunks_mut(), highs.array_chunks())
-            .for_each(|([lo, _], [hi, _])| up_sweep_val(lo, *hi));
+        zip(lows.chunks_exact_mut(2), highs.chunks_exact(2))
+            .for_each(|(lo_chunk, hi_chunk)| up_sweep_val(&mut lo_chunk[0], hi_chunk[0]));
         chunk_size /= 2;
     }
     // Up sweep the last SIMD vector.
@@ -84,8 +88,8 @@ pub fn inclusive_prefix_sum(
     let mut chunk_size = 2;
     while chunk_size < half_coset0_sums.len() {
         let (lows, highs) = half_coset0_sums.split_at_mut(chunk_size);
-        zip(lows.array_chunks_mut(), highs.array_chunks_mut())
-            .for_each(|([lo, _], [hi, _])| down_sweep_val(lo, hi));
+        zip(lows.chunks_exact_mut(2), highs.chunks_exact_mut(2))
+            .for_each(|(lo_chunk, hi_chunk)| down_sweep_val(&mut lo_chunk[0], &mut hi_chunk[0]));
         chunk_size *= 2;
     }
     // Handle last two down sweep rounds manually.
@@ -98,7 +102,11 @@ pub fn inclusive_prefix_sum(
         down_sweep_val(&mut lo, &mut hi);
         (half_coset0_sums[lo_index], half_coset0_sums[hi_index]) = (lo, hi);
     }
-    for ([l0, l1], [r0, r1]) in izip!(l_half.array_chunks_mut(), r_half.array_chunks_mut().rev()) {
+    for (l_chunk, r_chunk) in izip!(l_half.chunks_exact_mut(2), r_half.rchunks_exact_mut(2)) {
+        let (l_lo, l_hi) = l_chunk.split_at_mut(1);
+        let (l0, l1) = (&mut l_lo[0], &mut l_hi[0]);
+        let (r_lo, r_hi) = r_chunk.split_at_mut(1);
+        let (r0, r1) = (&mut r_lo[0], &mut r_hi[0]);
         let mut half_coset0_lo = *l0;
         let mut half_coset1_lo = *r0;
         down_sweep_val(&mut half_coset0_lo, &mut half_coset1_lo);
